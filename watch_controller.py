@@ -114,7 +114,7 @@ async def receive_message(sock):
             send_time = message_json["sendTime"]
             latency = get_master_time() - send_time
             if message_json["device"] == "android":
-                latency += 3300
+                latency += 200    #3300
             print(f"Latency: {latency}")
 
             tactile_pulses = message_json["tactilePulses"]
@@ -134,7 +134,7 @@ async def receive_message(sock):
     except RuntimeError as e:
         print(f"Error: {e}")
     except json.decoder.JSONDecodeError as e:
-        print(f"Error: {e}"
+        print(f"Error: {e}")
 
 #############################################################################
 async def play_pattern(start_delay, tactile_pulses, thermal_pulses):
