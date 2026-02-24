@@ -286,31 +286,127 @@ def handle_params(params, loop):
     return save_params
 
 def breathe_in():
-    temp_polarity = 1
-    polarity_pin_1 = thermal_pins[1] if temp_polarity == 1 else thermal_pins[0]
-    polarity_pin_2 = thermal_pins[2] if temp_polarity == 1 else thermal_pins[3]
-    ser.write(f'VSET1:{voltage}'.encode())
-    if temp_polarity != None:
-        GPIO.output(polarity_pin_1, GPIO.HIGH)
-        GPIO.output(polarity_pin_2, GPIO.HIGH)
+    activate_thermal(1, 1.5)
 
     sleep(preheat_time)
 
-    pwm[actuator1].ChangeDutyCycle(100)
-    sleep(warmup_time)
-    pwm[actuator1].ChangeDutyCycle(0)
+    pulse(0, warmup_time, 100)
+    pulse(3, warmup_time, 100)
 
     sleep(.5)
 
-    for _ in range(1):
-        rabbit(pulse_duration, pulse_interval, hops)
-        sleep(0.5)
+    pulse(0, .2, 100)
+    pulse(3, .2, 100)
+    sleep(0.13)
+    pulse(1, .2, 100)
+    pulse(4, .2, 100)
+    sleep(0.13)
+    pulse(2, .2, 100)
+    pulse(5, .2, 100)
+    
+    activate_thermal(0, 1.5)
+    
+    for _ in range(3):
+        for _ in range(3):
+            pulse(2, .048, 100)
+            pulse(4, .048, 100)
+            sleep(0.06)
+        for _ in range(3):
+            pulse(6, .048, 100)
+            pulse(7, .048, 100)
+            sleep(0.06) 
+        for _ in range(3):
+            pulse(8, .048, 100)
+            sleep(0.06) 
+            
+    pulse(6, 1, 50)
+    pulse(7, 1, 50)   
+    pulse(8, 1, 50)   
 
-    ser.write('VSET1:0'.encode())
-    if temp_polarity != None:
-        GPIO.output(polarity_pin_1, GPIO.LOW)
-        GPIO.output(polarity_pin_2, GPIO.LOW)
+    deactivate_thermal()
+    
+def breathe_out():
+    activate_thermal(1, 1.5)
 
+    sleep(preheat_time)
+
+    pulse(6, warmup_time, 50)
+    pulse(7, warmup_time, 50)   
+    pulse(8, warmup_time, 50)  
+
+    sleep(.5)
+
+    # All motion
+    pulse(6, .2, 100)
+    pulse(7, .2, 100)
+    sleep(0.13)
+    pulse(2, .2, 100)
+    pulse(5, .2, 100)
+    sleep(0.13)
+    pulse(1, .2, 100)
+    pulse(4, .2, 100)
+    sleep(0.13)
+    pulse(0, .2, 100)
+    pulse(3, .2, 100)
+    
+    # 2 motion, 1 saltation
+    pulse(6, .2, 100)
+    pulse(7, .2, 100)
+    sleep(0.13)
+    pulse(2, .2, 100)
+    pulse(5, .2, 100)
+    sleep(0.13)
+    pulse(1, .2, 100)
+    pulse(4, .2, 100)
+    sleep(0.2)
+    for _ in range(3):
+        pulse(1, .048, 100)
+        pulse(4, .048, 100)
+        sleep(0.06)
+    for _ in range(3):
+        pulse(0, .048, 100)
+        pulse(3, .048, 100)
+        sleep(0.06)
+        
+    # 1 motion, 2 saltation
+    pulse(6, .2, 100)
+    pulse(7, .2, 100)
+    sleep(0.13)
+    pulse(2, .2, 100)
+    pulse(5, .2, 100)
+    sleep(0.2)
+    for _ in range(3):
+        pulse(2, .048, 100)
+        pulse(5, .048, 100)
+        sleep(0.06)
+    for _ in range(3):
+        pulse(1, .048, 100)
+        pulse(4, .048, 100)
+        sleep(0.06)
+    for _ in range(3):
+        pulse(0, .048, 100)
+        pulse(3, .048, 100)
+        sleep(0.06)
+    
+    # All saltation
+    for _ in range(3):
+        pulse(6, .048, 100)
+        pulse(7, .048, 100)
+        sleep(0.06)
+    for _ in range(3):
+        pulse(2, .048, 100)
+        pulse(5, .048, 100)
+        sleep(0.06)
+    for _ in range(3):
+        pulse(1, .048, 100)
+        pulse(4, .048, 100)
+        sleep(0.06)
+    for _ in range(3):
+        pulse(0, .048, 100)
+        pulse(3, .048, 100)
+        sleep(0.06)
+
+    deactivate_thermal()
 
 def rabbit(pulse_duration, pulse_interval, hops):
     if hops == 3:
@@ -513,7 +609,7 @@ def thermal_pulse(pulse_duration, pulse_interval):
 
     deactivate_thermal()
 
-def pulse(pwmIndex, duration, intensity):
+async def pulse(pwmIndex, duration, intensity):
     pwm[pwmIndex].ChangeDutyCycle(intensity)
     sleep(duration)
     pwm[pwmIndex].ChangeDutyCycle(0)
