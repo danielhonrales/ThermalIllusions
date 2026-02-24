@@ -7,7 +7,8 @@ import random
 
 ### Tactile ################################################
 
-tactile_pins = [37,35,33,31,29,23,21,19,15]
+tactile_pins = [26, 24, 22, 18, 16, 12, 10, 8, 3, 5, 7, 11]
+#tactile_pins = [37,35,33,31,29,23,21,19,15]
 
 # GPIO Setup
 GPIO.setmode(GPIO.BOARD)
@@ -25,8 +26,8 @@ for motor in tactile_pins[:9]:
     pwmMotor.start(0) 
     pwm.append(pwmMotor)
 
-actuator1 = 7
-actuator2 = 8
+actuator1 = 0
+actuator2 = 1
 body_location = "arm"
 
 ############################################################
@@ -249,25 +250,10 @@ def handle_params(params, loop):
                 actuator2 = temp
                 print(f"Swapped actuator1 ({actuator1}) and actuator2 ({actuator2})")
 
-            elif params[0] in "swapactuators":
-                global body_location
-                if body_location == "arm":
-                    body_location = "finger"
-                    if actuator1 < actuator2:
-                        actuator1 = 5
-                        actuator2 = 6
-                    else:
-                        actuator1 = 6
-                        actuator2 = 5
-                else:
-                    body_location = "arm"
-                    if actuator1 < actuator2:
-                        actuator1 = 7
-                        actuator2 = 8
-                    else:
-                        actuator1 = 8
-                        actuator2 = 7
-                print(f"Actuators set to {body_location} location")
+            elif params[0] in "set":
+                actuator1 = int(params[1])
+                actuator2 = int(params[2])
+                print(f"Actuators set to {actuator1} and {actuator2}")
 
 
             elif params[0] in "voltage":
@@ -299,6 +285,33 @@ def handle_params(params, loop):
 
     return save_params
 
+def breathe_in():
+    temp_polarity = 1
+    polarity_pin_1 = thermal_pins[1] if temp_polarity == 1 else thermal_pins[0]
+    polarity_pin_2 = thermal_pins[2] if temp_polarity == 1 else thermal_pins[3]
+    ser.write(f'VSET1:{voltage}'.encode())
+    if temp_polarity != None:
+        GPIO.output(polarity_pin_1, GPIO.HIGH)
+        GPIO.output(polarity_pin_2, GPIO.HIGH)
+
+    sleep(preheat_time)
+
+    pwm[actuator1].ChangeDutyCycle(100)
+    sleep(warmup_time)
+    pwm[actuator1].ChangeDutyCycle(0)
+
+    sleep(.5)
+
+    for _ in range(1):
+        rabbit(pulse_duration, pulse_interval, hops)
+        sleep(0.5)
+
+    ser.write('VSET1:0'.encode())
+    if temp_polarity != None:
+        GPIO.output(polarity_pin_1, GPIO.LOW)
+        GPIO.output(polarity_pin_2, GPIO.LOW)
+
+
 def rabbit(pulse_duration, pulse_interval, hops):
     if hops == 3:
         hops = 3
@@ -320,7 +333,7 @@ def rabbit(pulse_duration, pulse_interval, hops):
         
 
 def mask_rabbit(pulse_duration, pulse_interval, hops, warmup):
-    temp_polarity = 0
+    temp_polarity = 1
     polarity_pin_1 = thermal_pins[1] if temp_polarity == 1 else thermal_pins[0]
     polarity_pin_2 = thermal_pins[2] if temp_polarity == 1 else thermal_pins[3]
     ser.write(f'VSET1:{voltage}'.encode())
@@ -472,8 +485,8 @@ def test():
     print()
 
 def activate_thermal(temp_polarity, voltage):
-    polarity_pin_1 = thermal_pins[3] if temp_polarity == 1 else thermal_pins[2]
-    polarity_pin_2 = thermal_pins[0] if temp_polarity == 1 else thermal_pins[1]
+    polarity_pin_1 = thermal_pins[3] if temp_polarity == 0 else thermal_pins[2]
+    polarity_pin_2 = thermal_pins[0] if temp_polarity == 0 else thermal_pins[1]
     ser.write(f'VSET1:{voltage}'.encode())
     if temp_polarity != None:
         GPIO.output(polarity_pin_1, GPIO.HIGH)
