@@ -303,6 +303,7 @@ async def breathe_in():
     async with asyncio.TaskGroup() as tg:
         tg.create_task(pulseAsync(0, warmup_time + .2, 100, 0))
         tg.create_task(pulseAsync(3, warmup_time + .2, 100, 0))
+        time += warmup_time
 
         time += .13
         tg.create_task(pulseAsync(1, .2, 100, time))
@@ -598,7 +599,7 @@ def activate_thermal(temp_polarity, voltage):
         GPIO.output(polarity_pin_2, GPIO.HIGH)
 
 async def activate_thermal_async(temp_polarity, voltage, waitTime):
-    sleep(waitTime)
+    await asyncio.sleep(waitTime)
     polarity_pin_1 = thermal_pins[3] if temp_polarity == 0 else thermal_pins[2]
     polarity_pin_2 = thermal_pins[0] if temp_polarity == 0 else thermal_pins[1]
     ser.write(f'VSET1:{voltage}'.encode())
@@ -615,7 +616,7 @@ def deactivate_thermal():
         GPIO.output(thermal_pin, GPIO.LOW)
 
 async def deactivate_thermal_async(waitTime):
-    sleep(waitTime)
+    await asyncio.sleep(waitTime)
     ser.write('VSET1:0'.encode())
     for thermal_pin in thermal_pins:
         GPIO.output(thermal_pin, GPIO.LOW)
@@ -642,9 +643,9 @@ def pulse(pwmIndex, duration, intensity):
     pwm[pwmIndex].ChangeDutyCycle(0)
 
 async def pulseAsync(pwmIndex, duration, intensity, waitTime):
-    sleep(waitTime)
+    await asyncio.sleep(waitTime)
     pwm[pwmIndex].ChangeDutyCycle(intensity)
-    sleep(duration)
+    await asyncio.sleep(duration)
     pwm[pwmIndex].ChangeDutyCycle(0)
 
 async def pulseTask(pwmIndex, duration, intensity, waitTime):
