@@ -47,7 +47,7 @@ ser = serial.Serial(
 )
 ser.write(f'VSET1:{0}'.encode())
 voltage = 1.5
-preheat_time = .75
+preheat_time = 1.25
 warmup_time = 2
 
 ############################################################
@@ -266,12 +266,22 @@ async def handle_params(params, loop):
                     voltage = new_voltage
                     print(f"Voltage now set to {voltage}V")
 
-            elif params[0] in "breathein":
-                await breathe_in()
-            
-            elif params[0] in "breatheout":
-                breathe_out(0)
+            elif params[0] in "breathe":
+                await breathe()
 
+            elif params[0] in "watch":
+                if len(params) < 3:
+                    params.append("bruh")
+                if "fun" in params[1]:
+                    await watch_fun(params[2])
+                if "rab" in params[1]:
+                    await watch_rab(params[2])
+                if "mot" in params[1]:
+                    await watch_mot(params[2])
+                if "bre" in params[1]:
+                    await watch_breathe()
+                if "bul" in params[1]:
+                    await watch_bulge()
             else:
                 print("Unknown command: \n")
                 save_params = False
@@ -283,6 +293,7 @@ async def handle_params(params, loop):
     
     except KeyboardInterrupt:
         print("Killing loop")
+        deactivate_thermal()
         for pwmMotor in pwm:
             pwmMotor.ChangeDutyCycle(0)
         
@@ -291,131 +302,340 @@ async def handle_params(params, loop):
             GPIO.output(thermal_pin, GPIO.LOW)
 
     return save_params
+    
+async def watch_rab_old(thermal_polarity):
+    loops = 3
+    saltation_duration = 0.08
+    saltation_interval = 0.13
+    hop_count = 3
+    time = 0
+    actuator_order = [3,2,1,0]
+    async with asyncio.TaskGroup() as tg:
+        thermal = 0 if "cold" in thermal_polarity else 1
+        tg.create_task(activate_thermal_async(thermal, 1.8, 0))
 
-async def breathe_in():
+    sleep(preheat_time)
+
+    async with asyncio.TaskGroup() as tg:
+        for loop in range(loops):
+            for actuator in actuator_order:
+                for _ in range(hop_count):
+                    tg.create_task(pulseAsync(actuator, saltation_duration, 100, time))
+                    time += saltation_interval
+        
+    deactivate_thermal()
+
+async def watch_breathe():
+    loops = 3
+    time = 0
+    hop_count = 3
+    actuators = [0, 1, 2]
+    actuator = 0
+    saltation_duration = 0.08
+    saltation_interval = 0.13
+    motion_duration = 1.2
+    motion_interval = 0.5
+    funneling_duration = 0.12
+    funneling_interval = 0.5
+    
+    async with asyncio.TaskGroup() as tg:
+        for loop in range(loops):
+            tg.create_task(activate_thermal_async(1, 1.8, time))
+            if loop == 0:
+                time += preheat_time
+            # BreatheIn - Motion
+            tg.create_task(pulseAsync(0, motion_duration / 2, 30, time))
+            time += motion_interval / 2
+            tg.create_task(pulseAsync(1, motion_duration, 50, time))
+            time += motion_interval
+            tg.create_task(pulseAsync(2, motion_duration, 65, time, 1))
+            time += motion_interval
+            tg.create_task(pulseAsync(0, motion_duration, 80, time, 1))
+            time += motion_interval
+
+            # BreatheIn - Topoff saltation
+            for _ in range(hop_count):
+                tg.create_task(pulseAsync(1, saltation_duration, 100, time))
+                time += saltation_interval * 1.2
+            for _ in range(hop_count):
+                tg.create_task(pulseAsync(2, saltation_duration, 100, time))
+                time += saltation_interval * 1.4
+            for _ in range(hop_count):
+                tg.create_task(pulseAsync(0, saltation_duration, 100, time))
+                time += saltation_interval * 1.6
+
+            # Thermal switch
+            tg.create_task(deactivate_thermal_async(time - 0.1))
+            tg.create_task(activate_thermal_async(0, 2.3, time))
+            
+            # Hold - funneling
+            tg.create_task(pulseAsync(0, funneling_duration, 95, time))
+            tg.create_task(pulseAsync(1, funneling_duration, 95, time))
+            time += funneling_interval * 1.2
+            tg.create_task(pulseAsync(1, funneling_duration, 95, time))
+            tg.create_task(pulseAsync(2, funneling_duration, 95, time))
+            time += funneling_interval * 1.2
+            tg.create_task(pulseAsync(2, funneling_duration, 95, time))
+            tg.create_task(pulseAsync(0, funneling_duration, 95, time))
+            time += funneling_interval * 1.2
+
+            # BreatheOut - Motion
+            tg.create_task(pulseAsync(2, motion_duration * 1.2, 50, time))
+            time += motion_interval * 1.1
+            tg.create_task(pulseAsync(1, motion_duration * 1.2, 65, time, 1))
+            time += motion_interval * 1.1
+            tg.create_task(pulseAsync(0, motion_duration * 1.4, 80, time, 1))
+            time += motion_interval * 1.2
+            tg.create_task(pulseAsync(2, motion_duration * 1.4, 65, time, 1))
+            time += motion_interval * 1.2
+            tg.create_task(pulseAsync(1, motion_duration * 1.4, 65, time, 1))
+            time += motion_interval * 1.1
+            tg.create_task(pulseAsync(0, motion_duration * 1.2, 65, time, 1))
+            time += motion_interval / 2
+            tg.create_task(pulseAsync(2, motion_duration / 2, 40, time, 1))
+
+            tg.create_task(deactivate_thermal_async(time + 1.0))
+            time += 2.0
+
+    deactivate_thermal()
+
+async def watch_bulge():
+    loops = 2
+    time = 0
+    hop_count = 3
+    actuators = [0, 1, 2]
+    actuator = 0
+    saltation_duration = 0.08
+    saltation_interval = 0.13
+    motion_duration = 1.2
+    motion_interval = 0.5
+    funneling_duration = 0.12
+    funneling_interval = 0.5
+    
+    async with asyncio.TaskGroup() as tg:
+        for loop in range(loops):
+            tg.create_task(activate_thermal_async(1, 1.8, time))
+            if loop == 0:
+                time += preheat_time
+            # BreatheIn - Motion
+            tg.create_task(pulseBulge(0, motion_duration, 50, time, 1))
+            tg.create_task(pulseBulge(1, motion_duration, 50, time, 1))
+            time += motion_interval
+            tg.create_task(pulseBulge(0, motion_duration, 70, time))
+            tg.create_task(pulseBulge(1, motion_duration, 70, time))
+            time += motion_interval
+            tg.create_task(pulseBulge(0, motion_duration, 50, time, 0, 1))
+            tg.create_task(pulseBulge(1, motion_duration, 50, time, 0, 1))
+            tg.create_task(pulseBulge(2, motion_duration, 70, time, 1))
+            time += motion_interval
+            tg.create_task(pulseBulge(2, motion_duration, 90, time, 0, 1))
+            time += motion_interval
+
+            # BreatheIn - Topoff saltation
+            for _ in range(hop_count):
+                tg.create_task(pulseAsync(0, saltation_duration, 80, time))
+                tg.create_task(pulseAsync(1, saltation_duration, 80, time))
+                time += saltation_interval * 1.2
+            for _ in range(hop_count):
+                tg.create_task(pulseAsync(0, saltation_duration, 100, time))
+                tg.create_task(pulseAsync(1, saltation_duration, 100, time))
+                time += saltation_interval * 1.4
+            for _ in range(hop_count):
+                tg.create_task(pulseAsync(0, saltation_duration, 60, time))
+                tg.create_task(pulseAsync(1, saltation_duration, 60, time))
+                tg.create_task(pulseAsync(2, saltation_duration, 100, time))
+                time += saltation_interval * 1.6
+
+            # Thermal switch
+            tg.create_task(deactivate_thermal_async(time - 0.1))
+            tg.create_task(activate_thermal_async(0, 2.3, time))
+            
+            # Hold - funneling
+            tg.create_task(pulseAsync(2, funneling_duration, 95, time))
+            time += funneling_interval * 1.2
+
+            tg.create_task(pulseAsync(2, funneling_duration, 95, time))
+            time += funneling_interval * 1.2
+            tg.create_task(pulseAsync(2, funneling_duration, 95, time))
+            time += funneling_interval * 1.2
+
+            # BreatheOut - Motion
+            tg.create_task(pulseAsync(2, motion_duration * 1.2, 50, time))
+            time += motion_interval * 1.1
+            tg.create_task(pulseAsync(1, motion_duration * 1.2, 65, time, 1))
+            time += motion_interval * 1.1
+            tg.create_task(pulseAsync(0, motion_duration * 1.4, 80, time, 1))
+            time += motion_interval * 1.2
+            tg.create_task(pulseAsync(2, motion_duration * 1.4, 65, time, 1))
+            time += motion_interval * 1.2
+            tg.create_task(pulseAsync(1, motion_duration * 1.4, 65, time, 1))
+            time += motion_interval * 1.1
+            tg.create_task(pulseAsync(0, motion_duration * 1.2, 65, time, 1))
+            time += motion_interval / 2
+            tg.create_task(pulseAsync(2, motion_duration / 2, 40, time, 1))
+
+            tg.create_task(deactivate_thermal_async(time + 1.0))
+            time += 2.0
+
+    deactivate_thermal()
+
+async def watch_fun(thermal_polarity):
+    loops = 7
+    duration = 0.2
     time = 0
 
     async with asyncio.TaskGroup() as tg:
-        tg.create_task(activate_thermal_async(1, 1.5, 0))
+        thermal = 0 if "cold" in thermal_polarity else 1
+        tg.create_task(activate_thermal_async(thermal, 1.85, 0))
 
     sleep(preheat_time)
 
     async with asyncio.TaskGroup() as tg:
-        tg.create_task(pulseAsync(0, warmup_time + .2, 100, 0))
-        tg.create_task(pulseAsync(3, warmup_time + .2, 100, 0))
-        time += warmup_time
+        for loop in range(loops):
+            actuators = random.sample([0, 1, 2], 2)
+            location = random.random()
+            intensity1 = 100 * math.sqrt(location / (location + (1 - location)))
+            intensity2 = 100 * math.sqrt((1 - location) / (location + (1 - location)))
 
-        time += .13
-        tg.create_task(pulseAsync(1, .2, 100, time))
-        tg.create_task(pulseAsync(4, .2, 100, time))
-
-        time += .13
-        tg.create_task(pulseAsync(2, .2, 100, time))
-        tg.create_task(pulseAsync(5, .2, 100, time))
-
-        tg.create_task(deactivate_thermal_async(time))
-        tg.create_task(activate_thermal_async(0, 1.5, time + .3))
-
-        time += .2
-        for _ in range(3):
-            tg.create_task(pulseAsync(2, .048, 100, time))
-            tg.create_task(pulseAsync(5, .048, 100, time))
-            time += 0.06
-        for _ in range(3):
-            tg.create_task(pulseAsync(6, .048, 100, time))
-            tg.create_task(pulseAsync(7, .048, 100, time))
-            time += 0.06
-        for _ in range(3):
-            tg.create_task(pulseAsync(8, .048, 100, time))
-            time += 0.06
+            tg.create_task(pulseAsync(actuators[0], duration, 100, time))
+            tg.create_task(pulseAsync(actuators[1], duration, 100, time))
+            time += duration + 0.7
         
-        tg.create_task(pulseAsync(6, 1, 50, time))
-        tg.create_task(pulseAsync(7, 1, 50, time))
-        tg.create_task(pulseAsync(8, 1, 50, time))
-
     deactivate_thermal()
-    
-def breathe_out():
-    activate_thermal(1, 1.5)
+
+async def watch_rab(thermal_polarity):
+    loops = 3
+    saltation_duration = 0.08
+    saltation_interval = 0.13
+    hop_count = 3
+    time = 0
+    actuator_order = [1,2,0]
+    async with asyncio.TaskGroup() as tg:
+        thermal = 0 if "cold" in thermal_polarity else 1
+        tg.create_task(activate_thermal_async(thermal, 1.85, 0))
 
     sleep(preheat_time)
 
-    pulse(6, warmup_time, 50)
-    pulse(7, warmup_time, 50)   
-    pulse(8, warmup_time, 50)  
-
-    sleep(.5)
-
-    # All motion
-    pulse(6, .2, 100)
-    pulse(7, .2, 100)
-    sleep(0.13)
-    pulse(2, .2, 100)
-    pulse(5, .2, 100)
-    sleep(0.13)
-    pulse(1, .2, 100)
-    pulse(4, .2, 100)
-    sleep(0.13)
-    pulse(0, .2, 100)
-    pulse(3, .2, 100)
-    
-    # 2 motion, 1 saltation
-    pulse(6, .2, 100)
-    pulse(7, .2, 100)
-    sleep(0.13)
-    pulse(2, .2, 100)
-    pulse(5, .2, 100)
-    sleep(0.13)
-    pulse(1, .2, 100)
-    pulse(4, .2, 100)
-    sleep(0.2)
-    for _ in range(3):
-        pulse(1, .048, 100)
-        pulse(4, .048, 100)
-        sleep(0.06)
-    for _ in range(3):
-        pulse(0, .048, 100)
-        pulse(3, .048, 100)
-        sleep(0.06)
+    async with asyncio.TaskGroup() as tg:
+        for loop in range(loops):
+            for actuator in actuator_order:
+                for _ in range(hop_count):
+                    tg.create_task(pulseAsync(actuator, saltation_duration, 100, time))
+                    time += saltation_interval
         
-    # 1 motion, 2 saltation
-    pulse(6, .2, 100)
-    pulse(7, .2, 100)
-    sleep(0.13)
-    pulse(2, .2, 100)
-    pulse(5, .2, 100)
-    sleep(0.2)
-    for _ in range(3):
-        pulse(2, .048, 100)
-        pulse(5, .048, 100)
-        sleep(0.06)
-    for _ in range(3):
-        pulse(1, .048, 100)
-        pulse(4, .048, 100)
-        sleep(0.06)
-    for _ in range(3):
-        pulse(0, .048, 100)
-        pulse(3, .048, 100)
-        sleep(0.06)
-    
-    # All saltation
-    for _ in range(3):
-        pulse(6, .048, 100)
-        pulse(7, .048, 100)
-        sleep(0.06)
-    for _ in range(3):
-        pulse(2, .048, 100)
-        pulse(5, .048, 100)
-        sleep(0.06)
-    for _ in range(3):
-        pulse(1, .048, 100)
-        pulse(4, .048, 100)
-        sleep(0.06)
-    for _ in range(3):
-        pulse(0, .048, 100)
-        pulse(3, .048, 100)
-        sleep(0.06)
+    deactivate_thermal()
 
+async def watch_mot(thermal_polarity):
+    loops = 3
+    duration = 0.8
+    interval = 0.35
+    time = 0
+    actuator_order = [1,2,0]
+    async with asyncio.TaskGroup() as tg:
+        thermal = 0 if "cold" in thermal_polarity else 1
+        tg.create_task(activate_thermal_async(thermal, 1.85, 0))
+
+    sleep(preheat_time)
+
+    async with asyncio.TaskGroup() as tg:
+        for loop in range(loops):
+            for actuator in actuator_order:
+                tg.create_task(pulseAsync(actuator, duration, 100, time, 1))
+                time += interval
+        
+    deactivate_thermal()
+
+async def breathe(loops = 3, speed_modifier = 1):
+    for loop in range(loops):
+        motion_duration = .7
+        motion_interval = .3
+        saltation_duration = 0.08
+        saltation_interval = 0.13
+        hop_count = 3
+        time = 0
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(activate_thermal_async(1, 3.0, 0))
+
+        sleep(preheat_time)
+
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(deactivate_thermal_async(time))
+            time += 0.1
+            tg.create_task(activate_thermal_async(1, 1.8, time))
+
+            # Motion up
+            tg.create_task(pulseAsync(8, motion_duration, 50, time, 1))
+
+            time += motion_interval
+            tg.create_task(pulseAsync(6, motion_duration, 50, time, 1))
+            tg.create_task(pulseAsync(7, motion_duration, 50, time, 1))
+            
+            time += motion_interval
+            tg.create_task(pulseAsync(2, motion_duration, 65, time, 1))
+            tg.create_task(pulseAsync(5, motion_duration, 65, time, 1))
+
+            time += motion_interval
+            tg.create_task(pulseAsync(1, motion_duration, 80, time, 1))
+            tg.create_task(pulseAsync(4, motion_duration, 80, time, 1))
+
+            #time += motion_duration
+
+            # Saltation        
+            time += motion_interval
+            for _ in range(hop_count):
+                tg.create_task(pulseAsync(2, saltation_duration, 100, time))
+                tg.create_task(pulseAsync(5, saltation_duration, 100, time))
+                time += saltation_interval * 1.2
+            for _ in range(hop_count):
+                tg.create_task(pulseAsync(1, saltation_duration, 100, time))
+                tg.create_task(pulseAsync(4, saltation_duration, 100, time))
+                time += saltation_interval * 1.4
+            for _ in range(hop_count):
+                tg.create_task(pulseAsync(0, saltation_duration, 100, time))
+                tg.create_task(pulseAsync(3, saltation_duration, 100, time))
+                time += saltation_interval * 1.6
+
+            for _ in range(3):
+                tg.create_task(pulseAsync(0, saltation_duration, 100, time))
+                tg.create_task(pulseAsync(3, saltation_duration, 100, time))
+                time += saltation_interval * 1.8
+
+            tg.create_task(deactivate_thermal_async(time - 1.0))
+            tg.create_task(activate_thermal_async(0, 3.5, time - 0.9))
+            tg.create_task(deactivate_thermal_async(time - 0.4))
+            tg.create_task(activate_thermal_async(0, 2.3, time))
+
+            # Saltation        
+            time += motion_interval
+            for _ in range(hop_count):
+                tg.create_task(pulseAsync(0, saltation_duration, 100, time))
+                tg.create_task(pulseAsync(3, saltation_duration, 100, time))
+                time += saltation_interval * 1.2
+            for _ in range(hop_count):
+                tg.create_task(pulseAsync(1, saltation_duration, 100, time))
+                tg.create_task(pulseAsync(4, saltation_duration, 100, time))
+                time += saltation_interval * 1.4
+            for _ in range(hop_count):
+                tg.create_task(pulseAsync(2, saltation_duration, 100, time))
+                tg.create_task(pulseAsync(5, saltation_duration, 100, time))
+                time += saltation_interval * 1.6
+
+            time -= saltation_interval * 1.4
+            # Motion up
+            tg.create_task(pulseAsync(1, motion_duration * 1.4, 60, time, 1))
+            tg.create_task(pulseAsync(4, motion_duration * 1.4, 60, time, 1))
+            
+            time += motion_interval * 1.2
+            tg.create_task(pulseAsync(2, motion_duration * 1.4, 50, time, 1))
+            tg.create_task(pulseAsync(5, motion_duration * 1.4, 50, time, 1))
+
+            time += motion_interval * 1.2
+            tg.create_task(pulseAsync(6, motion_duration * 1.4, 40, time, 1))
+            tg.create_task(pulseAsync(7, motion_duration * 1.4, 40, time, 1))
+
+
+        deactivate_thermal()
+        sleep(0.2)
     deactivate_thermal()
 
 def rabbit(pulse_duration, pulse_interval, hops):
@@ -489,7 +709,7 @@ def mask_funnel(pulse_duration, location, warmup):
 
     location = float(location)
     intensity1 = 100 * math.sqrt(location / (location + (1 - location)))
-    intensity2 = 100 * math.sqrt((1 - location) / (location + (1 - location)))\
+    intensity2 = 100 * math.sqrt((1 - location) / (location + (1 - location)))
 
     sleep(preheat_time)
 
@@ -547,7 +767,7 @@ def motion(pulse_duration, interval):
     pwm[actuator2].ChangeDutyCycle(0)
 
 def mask(polarity, thingy):
-    activate_thermal(polarity, voltage)
+    activate_thermal(polarity, 1.8)
     if thingy == 1:
         pwm[actuator1].ChangeDutyCycle(100)
         sleep(5)
@@ -642,10 +862,64 @@ def pulse(pwmIndex, duration, intensity):
     sleep(duration)
     pwm[pwmIndex].ChangeDutyCycle(0)
 
-async def pulseAsync(pwmIndex, duration, intensity, waitTime):
+async def pulseAsync(pwmIndex, duration, intensity, waitTime, ramp = 0):
     await asyncio.sleep(waitTime)
-    pwm[pwmIndex].ChangeDutyCycle(intensity)
-    await asyncio.sleep(duration)
+    
+    if ramp == 1:
+        rampWindow = duration / 3
+        rampStep = intensity / 3
+        pwm[pwmIndex].ChangeDutyCycle(rampStep)
+        await asyncio.sleep(rampWindow / 3)
+        pwm[pwmIndex].ChangeDutyCycle(rampStep * 2)
+        await asyncio.sleep(rampWindow / 3)
+        pwm[pwmIndex].ChangeDutyCycle(rampStep * 3)
+        await asyncio.sleep(rampWindow / 3)
+
+        await asyncio.sleep(rampWindow)
+
+        pwm[pwmIndex].ChangeDutyCycle(rampStep * 3)
+        await asyncio.sleep(rampWindow / 3)
+        pwm[pwmIndex].ChangeDutyCycle(rampStep * 2)
+        await asyncio.sleep(rampWindow / 3)
+        pwm[pwmIndex].ChangeDutyCycle(rampStep * 1)
+        await asyncio.sleep(rampWindow / 3)
+
+        pwm[pwmIndex].ChangeDutyCycle(0)
+
+    else:
+        pwm[pwmIndex].ChangeDutyCycle(intensity)
+        await asyncio.sleep(duration)
+        pwm[pwmIndex].ChangeDutyCycle(0)
+
+async def pulseBulge(pwmIndex, duration, intensity, waitTime, rampUp = 0, rampDown = 0):
+    await asyncio.sleep(waitTime)
+    
+    rampWindow = duration / 3
+    rampStep = intensity / 3
+        
+    if rampUp == 1:
+        pwm[pwmIndex].ChangeDutyCycle(rampStep)
+        await asyncio.sleep(rampWindow / 3)
+        pwm[pwmIndex].ChangeDutyCycle(rampStep * 2)
+        await asyncio.sleep(rampWindow / 3)
+        pwm[pwmIndex].ChangeDutyCycle(rampStep * 3)
+        await asyncio.sleep(rampWindow / 3)
+    else:
+        pwm[pwmIndex].ChangeDutyCycle(intensity)
+        await asyncio.sleep(rampWindow)
+    
+    await asyncio.sleep(rampWindow)
+
+    if rampDown == 1:
+        pwm[pwmIndex].ChangeDutyCycle(rampStep * 3)
+        await asyncio.sleep(rampWindow / 3)
+        pwm[pwmIndex].ChangeDutyCycle(rampStep * 2)
+        await asyncio.sleep(rampWindow / 3)
+        pwm[pwmIndex].ChangeDutyCycle(rampStep * 1)
+        await asyncio.sleep(rampWindow / 3)
+    else:
+        await asyncio.sleep(rampWindow)
+
     pwm[pwmIndex].ChangeDutyCycle(0)
 
 async def pulseTask(pwmIndex, duration, intensity, waitTime):
