@@ -67,48 +67,52 @@ POLARITY = "polarity"
 
 async def main():
     # Set up connection
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server_socket.bind((ip, int(port)))
-    server_socket.listen(1)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind((ip, int(port)))
 
     while True:
-        print(f"Waiting for connection at {ip}:{port} ...")
-        connection, client_address = server_socket.accept()
-        print("Connection from ", client_address)
+        print(f"Waiting for message from {ip}:{port} ...")
+        
+        while True:
+            await receive_message(sock)
 
-        await receive_message(connection)
-
-    server_socket.close()
+    sock.close()
     GPIO.cleanup()
     deactivate_thermal()
     ser.close()
 
-async def receive_message(connection):
+async def receive_message(sock):
     print("Ready to go! Send in a command...")
 
     try:
         # Receive the data
-        decoded = ""
         while True:
-            # Read data
-            data = connection.recv(4096)
+            data, addr = sock.recvfrom(4096)
             if not data:
                 break
-            decoded += data.decode()
-            if decoded.endswith("$"):
+            message = data.decode("ascii")
+            if message.endswith("$"):
+                message = message[:-1]
                 break
-        print(f"Full message: {decoded}")
-        decoded = decoded[:-1]
+        print(get_master_time())
+        print(f"Full message: {message}")
 
         # Load data
-        message_json = json.loads(decoded)
+        message_json = json.loads(message)
+        send_time = message_json["sendTime"]
+        latency = get_master_time() - send_time
+        if message_json["device"] == "android":
+            latency += 3300 # typical synced latency seems to be ~500, watch averages ~3700
+        print(f"Latency: {latency}")
         tactile_pulses = message_json["tactilePulses"]
         thermal_pulses = message_json["thermalPulses"]
         
-        await play_pattern(tactile_pulses, thermal_pulses)
 
-        await receive_message(connection)
+        start_delay = max(0, latency)
+        await play_pattern(start_delay, tactile_pulses, thermal_pulses)
+
+        print("Done")
+        await receive_message(sock)
 
     except RuntimeError as e:
         print(f"Error: {e}")
@@ -117,7 +121,8 @@ async def receive_message(connection):
 
 #############################################################################
 
-async def play_pattern(tactile_pulses, thermal_pulses):
+async def play_pattern(start_delay, tactile_pulses, thermal_pulses):
+    sleep(start_delay / 1000)
     async with asyncio.TaskGroup() as tg:
         for pulse in tactile_pulses:
             tg.create_task(pulse_async(
@@ -192,6 +197,8 @@ async def pulse_async(pwmIndex, duration, intensity, waitTime, rampUp = 0, rampD
 
     pwm[pwmIndex].ChangeDutyCycle(0)
 
+def get_master_time():
+    return int(time() * 1000)
 #############################################################################
 
 asyncio.run(main())
