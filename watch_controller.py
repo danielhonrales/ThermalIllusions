@@ -81,38 +81,56 @@ async def main():
     deactivate_thermal()
     ser.close()
 
-async def receive_message(sock):
-    print("Ready to go! Send in a command...")
+current_pattern_task = None  # track the running pattern globally
 
+async def receive_message(sock):
+    global current_pattern_task
+    print("Ready to go! Send in a command...")
     try:
-        # Receive the data
         while True:
             data, addr = sock.recvfrom(4096)
             if not data:
-                break
+                continue
             message = data.decode("ascii")
             if message.endswith("$"):
                 message = message[:-1]
-                break
-        print(get_master_time())
-        print(f"Full message: {message}")
 
-        # Load data
-        message_json = json.loads(message)
-        send_time = message_json["sendTime"]
-        latency = get_master_time() - send_time
-        if message_json["device"] == "android":
-            latency += 3300 # typical synced latency seems to be ~500, watch averages ~3700
-        print(f"Latency: {latency}")
-        tactile_pulses = message_json["tactilePulses"]
-        thermal_pulses = message_json["thermalPulses"]
-        
+            print(get_master_time())
+            print(f"Full message: {message}")
 
-        start_delay = max(0, latency)
-        await play_pattern(start_delay, tactile_pulses, thermal_pulses)
+            # ── Handle interrupt ───────────────────────────
+            if message == "interrupt":
+                if current_pattern_task and not current_pattern_task.done():
+                    current_pattern_task.cancel()
+                    await deactivate_thermal_async(0)
+                    for p in pwm:
+                        p.ChangeDutyCycle(0)
+                    print("Pattern interrupted")
+                continue  # wait for next message
 
-        print("Done")
-        await receive_message(sock)
+            # ── Handle pattern ─────────────────────────────
+            message_json = json.loads(message)
+            send_time = message_json["sendTime"]
+            latency = get_master_time() - send_time
+            if message_json["device"] == "android":
+                latency += 3300
+            print(f"Latency: {latency}")
+
+            tactile_pulses = message_json["tactilePulses"]
+            thermal_pulses = message_json["thermalPulses"]
+            start_delay = max(0, latency)
+
+            # Cancel any currently running pattern
+            if current_pattern_task and not current_pattern_task.done():
+                current_pattern_task.cancel()
+                await deactivate_thermal_async(0)
+                for p in pwm:
+                    p.ChangeDutyCycle(0)
+
+            # Start new pattern as cancellable task
+            current_pattern_task = asyncio.create_task(
+                play_pattern(start_delay, tactile_pulses, thermal_pulses)
+            )
 
     except RuntimeError as e:
         print(f"Error: {e}")
@@ -120,85 +138,88 @@ async def receive_message(sock):
         print(f"Error: {e}")
 
 #############################################################################
-
 async def play_pattern(start_delay, tactile_pulses, thermal_pulses):
-    sleep(start_delay / 1000)
-    async with asyncio.TaskGroup() as tg:
-        for pulse in tactile_pulses:
-            tg.create_task(pulse_async(
-                pulse[INDEX],
-                pulse[DURATION],
-                pulse[INTENSITY],
-                pulse[WAIT_TIME],
-                pulse[RAMP_UP],
-                pulse[RAMP_DOWN],
+    try:
+        await asyncio.sleep(start_delay / 1000)
+        async with asyncio.TaskGroup() as tg:
+            for pulse in tactile_pulses:
+                tg.create_task(pulse_async(
+                    pulse[INDEX],
+                    pulse[DURATION],
+                    pulse[INTENSITY],
+                    pulse[WAIT_TIME],
+                    pulse[RAMP_UP],
+                    pulse[RAMP_DOWN],
                 ))
-        
-        for pulse in thermal_pulses:
-            tg.create_task(activate_thermal_async(
-                pulse[POLARITY],
-                pulse[VOLTAGE],
-                pulse[DURATION],
-                pulse[WAIT_TIME],
-            ))
+            for pulse in thermal_pulses:
+                tg.create_task(activate_thermal_async(
+                    pulse[POLARITY],
+                    pulse[VOLTAGE],
+                    pulse[DURATION],
+                    pulse[WAIT_TIME],
+                ))
+        print("Done")
+    except asyncio.CancelledError:
+        print("Pattern cancelled")
+        raise  # must re-raise so asyncio cleans up properly
 
 #############################################################################
+async def pulse_async(pwmIndex, duration, intensity, waitTime, rampUp=0, rampDown=0):
+    try:
+        await asyncio.sleep(waitTime)
+
+        rampWindow = duration / 3
+        rampStep = intensity / 3
+
+        if rampUp == 1:
+            pwm[pwmIndex].ChangeDutyCycle(rampStep)
+            await asyncio.sleep(rampWindow / 3)
+            pwm[pwmIndex].ChangeDutyCycle(rampStep * 2)
+            await asyncio.sleep(rampWindow / 3)
+            pwm[pwmIndex].ChangeDutyCycle(rampStep * 3)
+            await asyncio.sleep(rampWindow / 3)
+        else:
+            pwm[pwmIndex].ChangeDutyCycle(intensity)
+            await asyncio.sleep(rampWindow)
+
+        await asyncio.sleep(rampWindow)
+
+        if rampDown == 1:
+            pwm[pwmIndex].ChangeDutyCycle(rampStep * 3)
+            await asyncio.sleep(rampWindow / 3)
+            pwm[pwmIndex].ChangeDutyCycle(rampStep * 2)
+            await asyncio.sleep(rampWindow / 3)
+            pwm[pwmIndex].ChangeDutyCycle(rampStep * 1)
+            await asyncio.sleep(rampWindow / 3)
+        else:
+            await asyncio.sleep(rampWindow)
+
+        pwm[pwmIndex].ChangeDutyCycle(0)
+
+    except asyncio.CancelledError:
+        pwm[pwmIndex].ChangeDutyCycle(0)  # clean up on cancel
+        raise
 
 async def activate_thermal_async(temp_polarity, voltage, duration, waitTime):
-    await asyncio.sleep(waitTime)
-    if temp_polarity == 1:
-        ser.write(f'VSET1:{voltage}'.encode())
-        GPIO.output(thermal_pins[1], GPIO.HIGH)
-        GPIO.output(thermal_pins[2], GPIO.HIGH)
-    elif temp_polarity == -1:
-        ser.write(f'VSET1:{voltage}'.encode())
-        GPIO.output(thermal_pins[0], GPIO.HIGH)
-        GPIO.output(thermal_pins[3], GPIO.HIGH)
-    else:
+    try:
+        await asyncio.sleep(waitTime)
+        if temp_polarity == 1:
+            ser.write(f'VSET1:{voltage}'.encode())
+            GPIO.output(thermal_pins[1], GPIO.HIGH)
+            GPIO.output(thermal_pins[2], GPIO.HIGH)
+        elif temp_polarity == -1:
+            ser.write(f'VSET1:{voltage}'.encode())
+            GPIO.output(thermal_pins[0], GPIO.HIGH)
+            GPIO.output(thermal_pins[3], GPIO.HIGH)
+        else:
+            await deactivate_thermal_async(0)
+
+        await asyncio.sleep(duration)
         await deactivate_thermal_async(0)
-    
-    await asyncio.sleep(duration)
-    await deactivate_thermal_async(0)
 
-async def deactivate_thermal_async(waitTime):
-    await asyncio.sleep(waitTime)
-    ser.write('VSET1:0'.encode())
-    for thermal_pin in thermal_pins:
-        GPIO.output(thermal_pin, GPIO.LOW)
-
-async def pulse_async(pwmIndex, duration, intensity, waitTime, rampUp = 0, rampDown = 0):
-    await asyncio.sleep(waitTime)
-    
-    rampWindow = duration / 3
-    rampStep = intensity / 3
-        
-    if rampUp == 1:
-        pwm[pwmIndex].ChangeDutyCycle(rampStep)
-        await asyncio.sleep(rampWindow / 3)
-        pwm[pwmIndex].ChangeDutyCycle(rampStep * 2)
-        await asyncio.sleep(rampWindow / 3)
-        pwm[pwmIndex].ChangeDutyCycle(rampStep * 3)
-        await asyncio.sleep(rampWindow / 3)
-    else:
-        pwm[pwmIndex].ChangeDutyCycle(intensity)
-        await asyncio.sleep(rampWindow)
-    
-    await asyncio.sleep(rampWindow)
-
-    if rampDown == 1:
-        pwm[pwmIndex].ChangeDutyCycle(rampStep * 3)
-        await asyncio.sleep(rampWindow / 3)
-        pwm[pwmIndex].ChangeDutyCycle(rampStep * 2)
-        await asyncio.sleep(rampWindow / 3)
-        pwm[pwmIndex].ChangeDutyCycle(rampStep * 1)
-        await asyncio.sleep(rampWindow / 3)
-    else:
-        await asyncio.sleep(rampWindow)
-
-    pwm[pwmIndex].ChangeDutyCycle(0)
-
-def get_master_time():
-    return int(time() * 1000)
+    except asyncio.CancelledError:
+        await deactivate_thermal_async(0)  # clean up on cancel
+        raise
 #############################################################################
 
 asyncio.run(main())
