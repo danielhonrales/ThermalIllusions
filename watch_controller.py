@@ -95,7 +95,7 @@ async def receive_message(sock):
             if message.endswith("$"):
                 message = message[:-1]
 
-            print(get_master_time())
+            #print(get_master_time())
             print(f"Full message: {message}")
 
             # ── Handle interrupt ───────────────────────────
@@ -131,6 +131,7 @@ async def receive_message(sock):
             current_pattern_task = asyncio.create_task(
                 play_pattern(start_delay, tactile_pulses, thermal_pulses)
             )
+            await asyncio.sleep(0)
 
     except RuntimeError as e:
         print(f"Error: {e}")
@@ -220,6 +221,46 @@ async def activate_thermal_async(temp_polarity, voltage, duration, waitTime):
     except asyncio.CancelledError:
         await deactivate_thermal_async(0)  # clean up on cancel
         raise
+
+async def deactivate_thermal_async(waitTime):
+    await asyncio.sleep(waitTime)
+    ser.write('VSET1:0'.encode())
+    for thermal_pin in thermal_pins:
+        GPIO.output(thermal_pin, GPIO.LOW)
+
+async def pulse_async(pwmIndex, duration, intensity, waitTime, rampUp = 0, rampDown = 0):
+    await asyncio.sleep(waitTime)
+    
+    rampWindow = duration / 3
+    rampStep = intensity / 3
+        
+    if rampUp == 1:
+        pwm[pwmIndex].ChangeDutyCycle(rampStep)
+        await asyncio.sleep(rampWindow / 3)
+        pwm[pwmIndex].ChangeDutyCycle(rampStep * 2)
+        await asyncio.sleep(rampWindow / 3)
+        pwm[pwmIndex].ChangeDutyCycle(rampStep * 3)
+        await asyncio.sleep(rampWindow / 3)
+    else:
+        pwm[pwmIndex].ChangeDutyCycle(intensity)
+        await asyncio.sleep(rampWindow)
+    
+    await asyncio.sleep(rampWindow)
+
+    if rampDown == 1:
+        pwm[pwmIndex].ChangeDutyCycle(rampStep * 3)
+        await asyncio.sleep(rampWindow / 3)
+        pwm[pwmIndex].ChangeDutyCycle(rampStep * 2)
+        await asyncio.sleep(rampWindow / 3)
+        pwm[pwmIndex].ChangeDutyCycle(rampStep * 1)
+        await asyncio.sleep(rampWindow / 3)
+    else:
+        await asyncio.sleep(rampWindow)
+
+    pwm[pwmIndex].ChangeDutyCycle(0)
+
+def get_master_time():
+    return int(time() * 1000)
 #############################################################################
 
 asyncio.run(main())
